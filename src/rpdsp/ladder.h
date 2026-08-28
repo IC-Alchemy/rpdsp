@@ -27,6 +27,9 @@
 //-----------------------------------------------------------
 // Huovilainen New Moog (HNM) model as per CMJ Jun 2006.
 // Richard van Hoesel, v.1.03, Feb. 14 2021.
+// v1.8 (IC Alchemy): adapt to rpdsp conventions and optimize the
+//      RP2350 FPU path by about 1.5x. Tuning constants are preserved; output
+//      differences are limited to floating-point rounding.
 // v1.7 (Infrasonic/Daisy): add configurable filter mode.
 // v1.6 (Infrasonic/Daisy): removes polyphase FIR, uses 4x linear
 //      oversampling for performance reasons.
@@ -36,26 +39,6 @@
 //         input_drive and passband_gain parameters.
 // please retain this header if you use this code.
 //
-// rpdsp port: MIT; adapted to rpdsp conventions (lowercase API,
-// prepare()/process(), header-only). All tuning constants are preserved
-// verbatim from the source. The per-sample computation has been
-// restructured for the RP2350 FPU (Cortex-M33, in-order, single-precision):
-//   - the mode-mix switch/std::array is hoisted out of the 4x oversampling
-//     loop (the mix is linear, so per-stage sums are weighted once/sample);
-//   - K*Qadjust and the passband-gain feedback offset are precomputed;
-//   - the input crossfade is incremental (one add per pass);
-//   - the one-pole stages are algebraically refolded from
-//       ft = alpha*(c1*s + c2*z0 - z1) + z1
-//     to
-//       ft = (alpha*c1)*s + (alpha*c2)*z0 + (1-alpha)*z1
-//     (3 FMA-class ops instead of 4; coefficients baked in computeCoeffs);
-//   - all 8 state variables live in registers across the oversampling loop
-//     (and across the whole block in the buffer overload), with the
-//     zapDenormal guard applied at state write-back.
-// Output differs from the pre-optimization code only by float rounding
-// order: measured max deviation < 2.3e-5 (~-93 dBFS) across LP/BP/HP modes
-// with cutoff sweeps and resonance up to self-oscillation; see
-// Docs/dsp_algorithm_benchmarks.md history for the harness.
 //-----------------------------------------------------------
 
 #include "algorithm.h"
@@ -71,14 +54,6 @@ namespace rpdsp {
  *
  * Selectable response (LP/BP/HP at 12 or 24 dB/oct), input drive into a
  * tanh clipper, passband-gain compensation, and stable self-oscillation.
- *
- * This is the heaviest filter in rpdsp: every output sample runs 4x
- * oversampling, each pass doing 4 one-pole stages plus a fastTanh. The
- * oversampling factor is the public constant kInterpolation -- drop it to
- * 2 on RP2350 if the realtime budget is blown. The stage coefficients and
- * sr_int_recip_ both derive from it, so the tuning self-adjusts when it
- * changes. Prefer the process(buf, size) overload in the audio callback:
- * it keeps the filter state in FPU registers for the whole block.
  */
 class LadderFilter {
  public:

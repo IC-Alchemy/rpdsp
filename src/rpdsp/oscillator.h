@@ -32,7 +32,7 @@
 //
 //    SecondOrderBSplineEventBuffer is the smear step: a 3-tap delay that drops
 //    each sub-sample-timed event into the kernel and shifts it out one sample
-//    at a time. SecondOrderBSplineSawOscillator is the simplest example and a
+//    at a time. BSplineSawOsc is the simplest example and a
 //    good place to see the whole impulse -> smear -> integrate flow at once.
 namespace rpdsp {
 
@@ -178,7 +178,7 @@ class SecondOrderBSplineEventBuffer {
 // Simplest band-limited oscillator, and the template for the pulse and
 // hard-sync variants. A sawtooth is reconstructed as: one +1 impulse at each
 // phase wrap (the rising edge), integrated against a constant negative slope.
-class SecondOrderBSplineSawOscillator {
+class BSplineSawOsc {
  public:
   void prepare(float sampleRate) {
     sampleRate_ = safeSampleRate(sampleRate);
@@ -238,7 +238,7 @@ class SecondOrderBSplineSawOscillator {
 // Band-limited square/pulse. A pulse is the integral of alternating edge
 // impulses: +1 at the rising edge (the wrap at phase 0) and -1 at the falling
 // edge (phase == pulseWidth). Integrating those gives the +/-1 square output.
-class SecondOrderBSplinePulseOscillator {
+class BSplineSquareOsc {
  public:
   void prepare(float sampleRate) {
     sampleRate_ = safeSampleRate(sampleRate);

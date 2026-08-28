@@ -105,30 +105,4 @@ inline float equalPowerPanRight(float pan) {
   return std::sin(clamp01((pan + 1.0f) * 0.5f) * kPi * 0.5f);
 }
 
-// Response curves for fmap. Ported from DaisySP core (Electrosmith, MIT) so
-// parameter ranges mapped through fmap keep their exact previous behavior.
-enum class Mapping {
-  LINEAR,
-  EXP,
-  LOG,
-};
-
-// Maps a normalized [0, 1] control value onto [min, max] with the chosen
-// response curve. EXP is a square curve (min + in^2 * (max - min)); LOG is
-// logarithmic in the sense of DaisySP's fmap (min * 10^(in / a), where a makes
-// in == 1 land on max) and requires min, max > 0.
-inline float fmap(float in, float min, float max, Mapping curve = Mapping::LINEAR) {
-  switch (curve) {
-    case Mapping::EXP:
-      return clamp(min + (in * in) * (max - min), min, max);
-    case Mapping::LOG: {
-      const float a = 1.0f / std::log10(max / min);
-      return clamp(min * std::pow(10.0f, in / a), min, max);
-    }
-    case Mapping::LINEAR:
-    default:
-      return clamp(min + in * (max - min), min, max);
-  }
-}
-
 }  // namespace rpdsp

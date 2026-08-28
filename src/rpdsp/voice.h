@@ -220,7 +220,7 @@ class TriggeredSynthVoice {
   Preset preset_{};
   VoiceTrigger currentTrigger_{};
   bool active_ = false;
-  std::array<SecondOrderBSplineSawOscillator, MaxOscillators> oscillators_{};
+  std::array<BSplineSawOsc, MaxOscillators> oscillators_{};
   NoiseOscillator noise_;
   StateVariableFilter filter_;
   ADSR ampEnvelope_;

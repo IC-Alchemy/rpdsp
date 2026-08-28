@@ -19,6 +19,7 @@ class MuxSliderScanner {
     }
     values_.fill(0.0f);
     quantized_.fill(0);
+    initialized_ = false;
   }
 
   template <typename SelectChannel, typename DelaySettling, typename ReadAdc>
@@ -34,12 +35,19 @@ class MuxSliderScanner {
       const float normalized = clamp(static_cast<float>(median) * (1.0f / 1023.0f), 0.0f, 1.0f);
 
       const int q = static_cast<int>((normalized * 127.0f) + 0.5f);
-      if (q != quantized_[channel]) {
+      if (!initialized_) {
+        quantized_[channel] = q;
+        values_[channel] = static_cast<float>(q) * (1.0f / 127.0f);
+        smoothers_[channel].reset(values_[channel]);
+      } else if (q != quantized_[channel]) {
         quantized_[channel] = q;
         smoothers_[channel].setTarget(static_cast<float>(q) * (1.0f / 127.0f));
+        values_[channel] = smoothers_[channel].next();
+      } else {
+        values_[channel] = smoothers_[channel].next();
       }
-      values_[channel] = smoothers_[channel].next();
     }
+    initialized_ = true;
   }
 
   [[nodiscard]] float value(std::size_t index) const {
@@ -73,6 +81,7 @@ class MuxSliderScanner {
   std::array<float, NumSliders> values_{};
   std::array<int, NumSliders> quantized_{};
   std::array<LinearSmoother, NumSliders> smoothers_{};
+  bool initialized_ = false;
 };
 
 class DebouncedButton {

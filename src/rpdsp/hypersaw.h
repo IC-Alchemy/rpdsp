@@ -23,7 +23,7 @@ namespace rpdsp {
  *     spectrum like the original.
  *   - Free-running voices with randomized phase on trigger().
  *
- * Each voice is a SecondOrderBSplineSawOscillator, the rpdsp band-limited
+ * Each voice is a BSplineSawOsc, the rpdsp band-limited
  * saw (the equivalent of a POLYBLEP saw), so there is no separate waveform
  * enum to set.
  */
@@ -131,7 +131,7 @@ class Hypersaw {
   float sideGain_ = 0.5f;
   float centerGain_ = 1.0f;
 
-  SecondOrderBSplineSawOscillator voices_[kVoiceCount];
+  BSplineSawOsc voices_[kVoiceCount];
   StateVariableFilter hpf_;
   XorShift32 rng_;
 };
