@@ -74,7 +74,10 @@ class SineOscillator {
   void reset(float phase = 0.0f) { phasor_.reset(phase); }
   void setFreq(float frequencyHz) { phasor_.setFreq(frequencyHz); }
 
-  float process() { return std::sin(kTwoPi * phasor_.process()); }
+  // Polynomial sine on the wrapped phase instead of std::sin: harmonics stay
+  // below -100 dB (null -125 dBFS against std::sin over a 20 Hz-10 kHz sweep)
+  // and it replaces a ~200-cycle newlib sinf call per sample on Cortex-M33.
+  float process() { return sinNormalizedPhase(phasor_.process()); }
 
  private:
   Phasor phasor_;

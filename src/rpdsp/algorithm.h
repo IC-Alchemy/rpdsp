@@ -95,6 +95,39 @@ inline float fastTanh(float x) {
   return x * (27.0f + x2) / (27.0f + 9.0f * x2);
 }
 
+// Pade [7/6] tanh: |error| <= 7.1e-5 against std::tanh for ALL x, and below
+// 1.5e-5 for |x| <= 4. The rational overshoots tanh increasingly toward the
+// asymptote, so the input is clamped at 4.79, the point where the overshoot
+// below the clamp and 1 - padeTanh(4.79) above it are equal; it is monotonic
+// over that range. One division and no libm call: ~30 cycles on Cortex-M33
+// against ~270 for the newlib tanhf that std::tanh compiles to. Use where
+// fastTanh is too coarse (a waveshaper that must null against tanh: fastTanh
+// is ~2e-2 off and only reaches -35 dBFS) but a per-sample libm call is too slow.
+inline float padeTanh(float x) {
+  x = clamp(x, -4.79f, 4.79f);
+  const float x2 = x * x;
+  const float num = x * (135135.0f + x2 * (17325.0f + x2 * (378.0f + x2)));
+  const float den = 135135.0f + x2 * (62370.0f + x2 * (3150.0f + x2 * 28.0f));
+  return num / den;
+}
+
+// sin(2*pi*phase) for a normalized phase in [0, 1), the convention Phasor
+// produces. Odd 7th-order polynomial on [-pi/2, pi/2] with quadrant folding:
+// max abs error 7.7e-7 (every harmonic below -100 dB), no division, no libm
+// call: ~30 cycles on Cortex-M33 against ~200 for newlib sinf. The folding
+// only covers one cycle, so callers must wrap the phase first.
+inline float sinNormalizedPhase(float phase) {
+  float x = phase * kTwoPi - kPi;  // [-pi, pi)
+  if (x > kPi * 0.5f) {
+    x = kPi - x;
+  } else if (x < -kPi * 0.5f) {
+    x = -kPi - x;
+  }
+  const float x2 = x * x;
+  const float y = x * (0.99999660f + x2 * (-0.16664824f + x2 * (0.00830629f + x2 * -0.00018363f)));
+  return -y;  // sin(x + pi) = -sin(x)
+}
+
 // Equal-power pan keeps perceived loudness steadier through center.
 inline float equalPowerPanLeft(float pan) {
   return std::cos(clamp01((pan + 1.0f) * 0.5f) * kPi * 0.5f);

@@ -20,12 +20,24 @@ public:
     stage_ = Stage::kIdle;
   }
 
-  void setAttack(float seconds) { attackSamples_ = secondsToSamples(seconds); }
+  // Each stage also caches 1/length: process() then multiplies the progress
+  // counter instead of dividing by the length every sample (a float divide is
+  // ~14 cycles on Cortex-M33 against 1 for the multiply). Differs from the
+  // division by at most 1 ulp; stage ends are still pinned exactly by the
+  // integer counter compare.
+  void setAttack(float seconds) {
+    attackSamples_ = secondsToSamples(seconds);
+    attackStep_ = 1.0f / static_cast<float>(attackSamples_);
+  }
 
-  void setDecay(float seconds) { decaySamples_ = secondsToSamples(seconds); }
+  void setDecay(float seconds) {
+    decaySamples_ = secondsToSamples(seconds);
+    decayStep_ = 1.0f / static_cast<float>(decaySamples_);
+  }
   void setSustain(float level) { sustain_ = clamp01(level); }
   void setRelease(float seconds) {
     releaseSamples_ = secondsToSamples(seconds);
+    releaseStep_ = 1.0f / static_cast<float>(releaseSamples_);
   }
 
   void set(float attackSeconds, float decaySeconds, float sustain,
@@ -59,8 +71,7 @@ public:
       break;
     case Stage::kAttack:
       ++attackProgress_;
-      value_ = static_cast<float>(attackProgress_) /
-               static_cast<float>(attackSamples_);
+      value_ = static_cast<float>(attackProgress_) * attackStep_;
       if (attackProgress_ >= attackSamples_) {
         value_ = 1.0f;
         stage_ = Stage::kDecay;
@@ -70,8 +81,7 @@ public:
     case Stage::kDecay:
       ++decayProgress_;
       value_ = lerp(1.0f, sustain_,
-                    static_cast<float>(decayProgress_) /
-                        static_cast<float>(decaySamples_));
+                    static_cast<float>(decayProgress_) * decayStep_);
       if (decayProgress_ >= decaySamples_) {
         value_ = sustain_;
         stage_ = Stage::kSustain;
@@ -83,8 +93,7 @@ public:
     case Stage::kRelease:
       ++releaseProgress_;
       value_ = lerp(releaseStart_, 0.0f,
-                    static_cast<float>(releaseProgress_) /
-                        static_cast<float>(releaseSamples_));
+                    static_cast<float>(releaseProgress_) * releaseStep_);
       if (releaseProgress_ >= releaseSamples_) {
         value_ = 0.0f;
         stage_ = Stage::kIdle;
@@ -121,6 +130,10 @@ private:
   int attackSamples_ = 480;
   int decaySamples_ = 4800;
   int releaseSamples_ = 9600;
+  // Reciprocals of the stage lengths above; kept in sync by the setters.
+  float attackStep_ = 1.0f / 480.0f;
+  float decayStep_ = 1.0f / 4800.0f;
+  float releaseStep_ = 1.0f / 9600.0f;
   int attackProgress_ = 0;
   int decayProgress_ = 0;
   int releaseProgress_ = 0;
