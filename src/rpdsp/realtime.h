@@ -6,8 +6,16 @@
 namespace rpdsp {
 
 inline float zapDenormal(float value) {
+#if defined(__ARM_ARCH) && defined(__ARM_FP)
+  // Arm Cortex-M FPUs (FPv4-SP/FPv5, e.g. RP2350's Cortex-M33) handle
+  // subnormals in hardware at full speed, so the guard is pure overhead there:
+  // three instructions per call, and the ladder alone calls it four times per
+  // sample. Return the value untouched on those targets.
+  return value;
+#else
   // Very small feedback states can force slow CPU denormal handling on host builds.
   return std::fabs(value) < 1.0e-20f ? 0.0f : value;
+#endif
 }
 
 class XorShift32 {
