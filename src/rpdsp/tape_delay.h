@@ -14,10 +14,12 @@ namespace rpdsp {
 template <size_t Capacity>
 class TapeDelay {
   static_assert(Capacity > 6, "TapeDelay capacity must leave room for its modulated read head.");
+  static_assert(Capacity <= 16777216, "TapeDelay float indices must represent every buffer slot.");
 
  public:
   void prepare(float sampleRate) {
     sampleRate_ = safeSampleRate(sampleRate);
+    coefficients_ = make_delay_tape_coefficients(sampleRate_);
     reset();
   }
 
@@ -34,13 +36,10 @@ class TapeDelay {
   void setFeedback(float feedback) { feedback_ = feedback; }
 
   float process(float input) {
-    // The recipe requires wow + 3 < delay < Capacity - 2. Keep that safety
-    // contract in the named wrapper without changing delay_tape() itself.
-    const float maxDelay = static_cast<float>(Capacity - 3);
-    const float wow = clamp(wowSamples_, 0.0f, maxDelay - 4.0f);
-    const float delay = clamp(delaySamples_, wow + 4.0f, maxDelay);
+    // The recipe clamps both read-head excursions, including when the user
+    // changes delay/wow between samples. Timing coefficients are cached.
     return delay_tape(input, buffer_.data(), static_cast<int>(Capacity),
-                      delay, wow, feedback_, state_.data());
+                      delaySamples_, wowSamples_, feedback_, coefficients_, state_.data());
   }
 
  private:
@@ -48,6 +47,7 @@ class TapeDelay {
   float delaySamples_ = 1.0f;
   float wowSamples_ = 0.0f;
   float feedback_ = 0.0f;
+  TapeDelayCoefficients coefficients_{};
   std::array<float, Capacity> buffer_{};
   std::array<float, 4> state_{};
 };

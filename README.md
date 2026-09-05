@@ -62,7 +62,7 @@ guess an API from habit.
 | `config.h` | `kDefaultSampleRate`, `kDefaultBlockSize` (`RPDSP_BLOCK_SIZE`, must be 16/32/64), `kPi`/`kTwoPi`. |
 | `control_surface.h` | `MuxSliderScanner<N>`, `DirectAdcSliderScanner<N>`, `DebouncedButton`. |
 | `delay_line.h` | `DelayLine<Capacity>` — circular buffer with linear/cubic fractional reads. |
-| `DSPFunctions.h` | Free-function DSP recipes (`comp_feedback`, `filt_diodesvf`, `filt_vowel`, `osc_pdmorph`/`osc_fbfm`/`osc_chaosdrift`/`osc_morphtsq`/`osc_tzfm`/`osc_dsf`/`osc_formant`/`osc_revsync`, `res_tension`, `gtr_feedback`, `delay_bbd`/`delay_tape`, `fx_swarm`/`fx_diffuse`/`gran_cloud`/`fx_freqshift`, `ringmod_diode`, `pitch_octdown`, `adsr_analog`, `env_loopad`, `lfo_randcubic`, `chaos_lorenz`, `cv_wander`, `smooth_catchup`). Caller-owned `float*` state; `inc = freq/fs`. |
+| `DSPFunctions.h` | Free-function DSP recipes (`comp_feedback`, `filt_diodesvf`, `filt_vowel`, `osc_pdmorph`/`osc_fbfm`/`osc_chaosdrift`/`osc_morphtsq`/`osc_tzfm`/`osc_dsf`/`osc_formant`/`osc_revsync`/`osc_prism`, `res_tension`/`res_braid`, `gtr_feedback`, `delay_bbd`/`delay_tape`, `fx_swarm`/`fx_diffuse`/`gran_cloud`/`fx_freqshift`/`fx_memoryfold`, `ringmod_diode`, `pitch_octdown`, `adsr_analog`, `env_loopad`, `lfo_randcubic`/`lfo_hesitate`, `chaos_lorenz`, `cv_wander`, `smooth_catchup`). Caller-owned `float*` state; `inc = freq/fs`. |
 | `dynamics.h` | `EnvelopeFollower`, `CompressorStaticCurve`, `GainReductionSmoother`, `Compressor`. |
 | `effects.h` | `Waveshaper`, `Delay<Capacity>`, `Chorus<Capacity>`, `CombFilter<Capacity>`, `AllpassFilter<Capacity>`, `SchroederReverb`, `StereoSchroederReverb`. |
 | `envelope.h` | `ADSR`. |
@@ -129,14 +129,17 @@ Worth knowing before you guess an API from habit:
   `DSPFunctions.h` — oscillators, filters, resonators, delays, modulators,
   envelopes, modulation sources. No `prepare()`/class; pass a zero-init
   `float*` state array plus raw per-sample inputs (`inc = freq/fs`). RNG
-  helpers (`lfo_randcubic`, `cv_wander`, `gran_cloud`) take a caller-owned
-  non-zero-seeded `uint32_t*` LCG.
+  helpers (`lfo_randcubic`, `cv_wander`, `gran_cloud`, `lfo_hesitate`) take a
+  caller-owned `uint32_t*` LCG. Zero is a valid seed; use distinct seeds for
+  distinct streams. State sizes and layouts are documented above each recipe.
 - **Optional named wrappers:** `TapeDelay<Capacity>`, `BbdDelay<Capacity>`,
   `FrequencyShifter`, and `AnalogAdsr` are separate headers that own the
   storage and conventional parameters for four recipes. They delegate to
   `DSPFunctions.h`; the patchable free-function recipe API remains intact.
-  `TapeDelay` deliberately retains `delay_tape`'s 48 kHz wow/flutter law;
-  `prepare(sampleRate)` is used for its milliseconds conversion.
+  `TapeDelay::prepare(sampleRate)` now configures milliseconds conversion,
+  0.8 Hz wow, 6.3 Hz flutter, and the oxide filter time constant.
+  `FrequencyShifter` caches its sine/cosine rotation in `setShiftHz()` and
+  recomputes it in `prepare()`; neither wrapper evaluates trig/exp per sample.
 - **Out-parameter style:** `HardwareOscillator::peekSample`/`nextSample` and
   `HardwareMorphOscillator::nextSample` write through a reference instead of
   returning a value.
@@ -146,6 +149,110 @@ Worth knowing before you guess an API from habit:
 - **`ADSR` is intentionally self-contained** — it defines its own local
   `kDefaultSampleRate`/`clamp01`/`lerp` rather than including `config.h` /
   `algorithm.h`. Don't assume it shares the shared constant if you change one.
+
+### Recipe coefficients and compatibility
+
+Existing recipe calls and state-array sizes remain valid. The short
+`comp_feedback`, `filt_vowel`, and `delay_tape` calls keep their 48 kHz timing
+defaults. To configure another rate, build coefficients at setup or when
+controls change, then pass them immediately before the state pointer:
+
+| Factory | Coefficient overload |
+|---|---|
+| `make_comp_feedback_coefficients(fs)` | `comp_feedback(x, threshold, amount, coeff, state)` |
+| `make_filt_vowel_coefficients(vowel, fs)` | `filt_vowel(x, coeff, state)` |
+| `make_delay_tape_coefficients(fs)` | `delay_tape(x, buffer, n, delay, wow, feedback, coeff, state)` |
+| `make_fx_freqshift_coefficients(shiftHz / fs)` | `fx_freqshift(x, coeff, state)` |
+
+For example, calculate these once and retain both coefficients and state:
+
+```cpp
+const auto compressor = rpdsp::make_comp_feedback_coefficients(96000.0f);
+float compressorState[2]{};
+// Per sample:
+// float y = rpdsp::comp_feedback(input, 0.3f, 0.5f, compressor, compressorState);
+```
+
+`recipe_rate_at_sample_rate(coefficientAt48k, fs)` preserves a one-pole's
+time constant. The coefficient structs expose their fields for custom
+settings; observe each field's documented bounds when constructing them
+manually. Factories use log/exp or trig and belong at setup/control rate.
+Vowel coefficients scale the original Chamberlin tuning, which remains an
+approximation. Other recipes with fixed follower/servo coefficients state
+those per-sample rates in their comments.
+
+Behavior corrections:
+
+- `adsr_analog` releases immediately on gate-off, including during attack.
+  Attack, decay, sustain and release are clamped to `[0,1]`.
+- `delay_tape` clamps delay to `[1,n-2]` samples and limits wow to the room
+  available on both sides. A wrapped read that rounds to `n` becomes index
+  zero. Minimum buffer lengths are 2 for BBD, 3 for the diffuser, and 4 for
+  tape/cloud; lengths above `2^24` are rejected because positions are floats.
+  Invalid lengths return silence (dry input for the additive diffuser)
+  without touching pointers. Valid calls require correctly sized storage;
+  reset buffer and state together if its size changes.
+- Oscillator fundamental increments are signed and clamped to `[-0.5,0.5]`.
+  Phases use `wrap01`, including reverse motion, and sine cores use
+  `sinNormalizedPhase`. This improves sine accuracy and can change the
+  sound of strongly nonlinear/feedback patches. Warping, FM, sync, DSF,
+  and folding still alias; oversampling is the caller's responsibility.
+- The frequency-shifter carrier uses a true rotation instead of Euler's
+  frequency-dependent angular error. Its existing polarity is preserved:
+  positive shifts move partials down, negative shifts move them up. The
+  coefficient factory gives the most accurate tuning. The original
+  `fx_freqshift(x, inc, state)` call supports per-sample modulation using
+  polynomial sine/cosine coefficients. The Hilbert pair's sideband
+  rejection remains approximate, particularly near DC and Nyquist.
+- Vowel 4 now reaches the exact final table entry. `gtr_feedback` needs
+  four state floats; existing five-float arrays are still sufficient.
+
+### Four additional patchable recipes
+
+Each function below uses fixed caller-owned storage, needs no allocation,
+and documents its state layout and control bounds in `DSPFunctions.h`.
+Keep state between samples; zero it to reset. Pass finite controls and audio.
+
+| Function | Sound or behavior | State |
+|---|---|---|
+| `osc_prism(inc, focus, spread, state)` | Move a spectral focus across six harmonics and widen it to blend neighbors. Partials fade near Nyquist. | `float[1]` |
+| `res_braid(x, g1, g2, loss, couple, state)` | Two resonant modes exchange energy through a scattering junction, producing beating and split resonances. | `float[4]` |
+| `fx_memoryfold(x, drive, memory, rate, state)` | A wavefolder with a moving bias that follows recent signal history. | `float[1]` |
+| `lfo_hesitate(rate, linger, memory, rng, state)` | Correlated random targets with an adjustable pause followed by a smooth glide. | `float[4]` plus `uint32_t` RNG |
+
+Example settings at 48 kHz, called once per sample. The two audio sources
+are shown independently; send `osc`, `struck`, or `folded` to your mixer.
+Compute the resonator tuning and time coefficients when controls change:
+
+```cpp
+#include <rpdsp/DSPFunctions.h>
+
+float prismState[1]{}, braidState[4]{}, foldState[1]{}, gestureState[4]{};
+uint32_t gestureSeed = 42;
+const float fs = 48000.0f;
+const float g1 = tanf(rpdsp::kPi * 220.0f / fs);
+const float g2 = tanf(rpdsp::kPi * 331.0f / fs);
+const float loss = 1.0f - expf(logf(0.001f) / (1.5f * fs)); // 1.5 s T60
+const float follow = 1.0f - expf(-1.0f / (0.002f * fs));   // 2 ms memory
+
+void renderExample(float impulse) { // e.g. one sample at 0.2, then zero
+    float cv = rpdsp::lfo_hesitate(0.8f / fs, 0.3f, 0.4f,
+                                 &gestureSeed, gestureState);
+    float osc = rpdsp::osc_prism(110.0f / fs, 0.5f + 0.5f * cv,
+                               0.35f, prismState);
+    float struck = rpdsp::res_braid(impulse, g1, g2, loss, 0.002f, braidState);
+    float folded = rpdsp::fx_memoryfold(osc, 3.0f, 0.65f, follow, foldState);
+    // Route the desired signals to your output here.
+}
+```
+
+`osc_prism` costs up to six polynomial sine evaluations per sample. Its
+partial fade does not remove sidebands from rapid parameter modulation.
+`fx_memoryfold` is a naive wavefolder and benefits from oversampling.
+`res_braid` conserves energy in its rotations before applying loss;
+continuous excitation can still build up a level above unity. Its `g1/g2`
+describe the uncoupled pitches, which change when coupling is introduced.
+Hardware CPU cost and sound still need measurement on the target board.
 
 ## Gotchas
 
