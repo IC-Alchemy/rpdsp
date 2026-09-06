@@ -124,7 +124,7 @@ private:
   }
 
   float sampleRate_ = kDefaultSampleRate;
-  float sustain_ = 0.7f;
+  float sustain_ = 0.5f;
   float value_ = 0.0f;
   float releaseStart_ = 0.0f;
   int attackSamples_ = 480;
