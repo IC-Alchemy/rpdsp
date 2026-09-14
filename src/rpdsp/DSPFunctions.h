@@ -152,15 +152,38 @@ inline float filt_vowel(float x, float vowel, float* state) {
 // Phase-distortion morph oscillator: shape clamped 0..1, sine to bright
 // sync-like spectra. The warped sine has slope corners and can alias.
 // inc = signed freq/fs, clamped +/-0.5. Zero-init state[1]: phase.
-inline float osc_pdmorph(float inc, float shape, float* state) {
+struct PhaseDistortionCoefficients {
+    float knee, risingSlope, fallingSlope;
+};
+
+inline PhaseDistortionCoefficients make_osc_pdmorph_coefficients(float shape) {
+    const float k = 0.5f - clamp01(shape) * 0.49f;
+    return {k, 0.5f / k, 0.5f / (1.0f - k)};
+}
+
+// Prepared shape: calculate the two divisions at control rate. Phase and
+// coefficients have separate ownership so changing shape never resets pitch.
+inline float osc_pdmorph(float inc, const PhaseDistortionCoefficients& c, float* state) {
     float p = wrap01(state[0] + clamp(inc, -0.5f, 0.5f));
     state[0] = p;
-    shape = clamp01(shape);
-    float k = 0.5f - shape * 0.49f;                    // knee: fast half / slow half
-    float w = (p < k) ? p * (0.5f / k) : 0.5f + (p - k) * (0.5f / (1.0f - k));
+    float w = (p < c.knee) ? p * c.risingSlope : 0.5f + (p - c.knee) * c.fallingSlope;
     return sinNormalizedPhase(wrap01(w));
 }
 
+inline float osc_pdmorph(float inc, float shape, float* state) {
+    // The many clean body/sub/modulator oscillators need only a phase and sine.
+    if (shape <= 0.0f) {
+        state[0] = wrap01(state[0] + clamp(inc, -0.5f, 0.5f));
+        return sinNormalizedPhase(state[0]);
+    }
+    // Keep the uncached API at one division per sample for callers that
+    // intentionally modulate shape at audio rate.
+    const float p = wrap01(state[0] + clamp(inc, -0.5f, 0.5f));
+    state[0] = p;
+    const float k = 0.5f - clamp01(shape) * 0.49f;
+    const float w = (p < k) ? p * (0.5f / k) : 0.5f + (p - k) * (0.5f / (1.0f - k));
+    return sinNormalizedPhase(wrap01(w));
+}
 
  // Feedback-FM Operator
 
@@ -171,8 +194,10 @@ inline float osc_pdmorph(float inc, float shape, float* state) {
 inline float osc_fbfm(float inc, float fbk, float mod, float* state) {
     float p = wrap01(state[0] + clamp(inc, -0.5f, 0.5f));
     state[0] = p;
-    float ph = p + mod + fbk * 0.5f * (state[1] + state[2]);
-    float y = sinNormalizedPhase(wrap01(ph));
+    float ph = p + mod;
+    if (fbk != 0.0f) ph += fbk * 0.5f * (state[1] + state[2]);
+    // An unmodulated operator is already normalized by the accumulator wrap.
+    float y = sinNormalizedPhase((fbk == 0.0f && mod == 0.0f) ? p : wrap01(ph));
     state[2] = state[1]; state[1] = y;
     return y;
 }
@@ -306,7 +331,41 @@ inline float osc_revsync(float minc, float ratio, float* state) {
 // Each partial fades over 0.45..0.5 cycles/sample before being omitted;
 // fast control modulation can still alias. Output nominally +/-1.
 // Zero-init state[1]: fundamental phase. Advance before rendering, as above.
+struct PrismCoefficients { float weights[6]; };
+
+inline PrismCoefficients make_osc_prism_coefficients(float focus, float spread) {
+    const float center = 1.0f + 5.0f * clamp01(focus);
+    const float width = 1.0f + 5.0f * clamp01(spread);
+    PrismCoefficients c{};
+    float norm = 0.0f;
+    for (int h = 1; h <= 6; ++h) {
+        const float tent = fmaxf(0.0f, 1.0f - fabsf((float)h - center) / width);
+        c.weights[h - 1] = tent * tent;
+        norm += c.weights[h - 1];
+    }
+    const float inverseNorm = 1.0f / norm;
+    for (float& weight : c.weights) weight *= inverseNorm;
+    return c;
+}
+
+// Spectral weights are control-rate; Nyquist fading still follows the actual
+// increment every sample, including pitch bend and slide.
+inline float osc_prism(float inc, const PrismCoefficients& c, float* state) {
+    inc = clamp(inc, -0.5f, 0.5f);
+    state[0] = wrap01(state[0] + inc);
+    float out = 0.0f;
+    for (int h = 1; h <= 6; ++h) {
+        const float weight = c.weights[h - 1];
+        const float fade = clamp01((0.5f - fabsf(inc) * (float)h) * 20.0f);
+        if (weight * fade > 0.0f) {
+            out += weight * fade * sinNormalizedPhase(wrap01(state[0] * (float)h));
+        }
+    }
+    return out;
+}
+
 inline float osc_prism(float inc, float focus, float spread, float* state) {
+    // Preserve the original single-pass API for audio-rate spectral controls.
     inc = clamp(inc, -0.5f, 0.5f);
     const float center = 1.0f + 5.0f * clamp01(focus);
     const float width = 1.0f + 5.0f * clamp01(spread);
@@ -316,12 +375,11 @@ inline float osc_prism(float inc, float focus, float spread, float* state) {
         const float tent = fmaxf(0.0f, 1.0f - fabsf((float)h - center) / width);
         const float weight = tent * tent;
         const float fade = clamp01((0.5f - fabsf(inc) * (float)h) * 20.0f);
-        norm += weight;                              // retain the Nyquist fade
-        if (weight * fade > 0.0f) {
+        norm += weight;
+        if (weight * fade > 0.0f)
             out += weight * fade * sinNormalizedPhase(wrap01(state[0] * (float)h));
-        }
     }
-    return out / norm;                               // norm >= 0.5 for these bounds
+    return out / norm;
 }
 
 
