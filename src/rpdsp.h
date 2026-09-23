@@ -38,6 +38,7 @@
 #include "rpdsp/realtime.h"
 #include "rpdsp/rhythm_sequencer.h"
 #include "rpdsp/scale_table.h"
+#include "rpdsp/sitar.h"
 #include "rpdsp/tape_delay.h"
 #include "rpdsp/voice.h"
 #include "rpdsp/waveguide.h"

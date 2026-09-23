@@ -81,6 +81,7 @@ guess an API from habit.
 | `realtime.h` | `zapDenormal`, `XorShift32` (fast deterministic PRNG). |
 | `rhythm_sequencer.h` | `RhythmGateSequencer<MaxSteps>` — gate sequencer over a caller-owned pattern table. |
 | `scale_table.h` | `kScaleTable`, `kScaleNames`, `scaleStepSemitones`, `scaleName` — 13 constexpr musical scales, no classes. |
+| `sitar.h` | `SitarStringVoice<Capacity>` — sitar physical model: Karplus-Strong course with jawari bridge buzz, taraf sympathetic resonator bank, two-resonator body, and meend pitch-slide. |
 | `tape_delay.h` | `TapeDelay<Capacity>` — optional named wrapper around `delay_tape`; owns fixed tape storage and protects its modulated read-head bounds. |
 | `voice.h` | `TriggeredSynthVoice<MaxOscillators>` (+ `VoiceTrigger`, preset structs, `classicThreeSawSubtractivePreset()`, `noisePluckPreset()`). |
 | `waveguide.h` | `KarplusStrongVoice<Capacity>` — Karplus-Strong plucked string. `ExtendedKarplusStrongVoice<Capacity>` — fractional-period tuning, brightness loop blend, pick-position tap, excitation modes, sympathetic string, body resonance. |
