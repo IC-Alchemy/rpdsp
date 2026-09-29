@@ -17,6 +17,7 @@
 #include "rpdsp/bbd_delay.h"
 #include "rpdsp/config.h"
 #include "rpdsp/control_surface.h"
+#include "rpdsp/dark_reverb.h"
 #include "rpdsp/delay_line.h"
 #include "rpdsp/DSPFunctions.h"
 #include "rpdsp/dynamics.h"

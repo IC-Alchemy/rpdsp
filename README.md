@@ -61,6 +61,7 @@ guess an API from habit.
 | `bbd_delay.h` | `BbdDelay<Capacity>` — optional named wrapper around `delay_bbd`; owns fixed BBD storage. |
 | `config.h` | `kDefaultSampleRate`, `kDefaultBlockSize` (`RPDSP_BLOCK_SIZE`, must be 16/32/64), `kPi`/`kTwoPi`. |
 | `control_surface.h` | `MuxSliderScanner<N>`, `DirectAdcSliderScanner<N>`, `DebouncedButton`. |
+| `dark_reverb.h` | `DarkReverb<Capacity, Storage>` — long, dark stereo reverb for Cortex-M33: half-rate tank, one shared half-precision delay buffer (32 KB default), decays up to 1000 s plus freeze. See [Long dark reverb](#long-dark-reverb). |
 | `delay_line.h` | `DelayLine<Capacity>` — circular buffer with linear/cubic fractional reads. |
 | `DSPFunctions.h` | Free-function DSP recipes (`comp_feedback`, `filt_diodesvf`, `filt_vowel`, `osc_pdmorph`/`osc_fbfm`/`osc_chaosdrift`/`osc_morphtsq`/`osc_tzfm`/`osc_dsf`/`osc_formant`/`osc_revsync`/`osc_prism`, `res_tension`/`res_braid`, `gtr_feedback`, `delay_bbd`/`delay_tape`, `fx_swarm`/`fx_diffuse`/`gran_cloud`/`fx_freqshift`/`fx_memoryfold`, `ringmod_diode`, `pitch_octdown`, `adsr_analog`, `env_loopad`, `lfo_randcubic`/`lfo_hesitate`, `chaos_lorenz`, `cv_wander`, `smooth_catchup`). Caller-owned `float*` state; `inc = freq/fs`. |
 | `dynamics.h` | `EnvelopeFollower`, `CompressorStaticCurve`, `GainReductionSmoother`, `Compressor`. |
@@ -119,7 +120,9 @@ Worth knowing before you guess an API from habit:
   `LinearSmoother::next()` (also renamed — no `process` at all).
 - **`process()` returns a struct or array, not a float:**
   `StateVariableFilter::process()` → `StateVariableOutput{lowpass, bandpass,
-  highpass}`; `StereoSchroederReverb::process(l, r)` → `std::array<float, 2>`.
+  highpass}`; `StereoSchroederReverb::process(l, r)` and
+  `DarkReverb::process(l, r)` → `std::array<float, 2>`. `DarkReverb` also has
+  a block overload `process(inL, inR, outL, outR, frames)` (in-place is fine).
 - **Integer samples, not float:** everything in `hardware_interpolator.h`
   operates on `std::int32_t`/`std::int16_t`.
 - **Callback-driven instead of `process()`:** `MuxSliderScanner::scan(...)`
@@ -253,6 +256,71 @@ partial fade does not remove sidebands from rapid parameter modulation.
 continuous excitation can still build up a level above unity. Its `g1/g2`
 describe the uncoupled pitches, which change when coupling is introduced.
 Hardware CPU cost and sound still need measurement on the target board.
+
+## Long dark reverb
+
+`DarkReverb` is built for tails of tens of seconds to minutes on an RP2350
+without spending much RAM or CPU:
+
+```cpp
+#include <rpdsp/dark_reverb.h>
+
+rpdsp::DarkReverb<> reverb;  // 32 KB buffer; keep it static/global
+
+void setup() {
+  reverb.prepare(48000.0f);
+  reverb.setDecaySeconds(45.0f);  // low-frequency T60, 0.1..1000 s
+  reverb.setDampingHz(2500.0f);   // lower = darker; highs die sooner
+  reverb.setLowCutHz(60.0f);      // keep rumble out of the tank
+  reverb.setMix(0.4f);
+}
+
+void audioBlock(float* left, float* right, size_t frames) {
+  reverb.process(left, right, left, right, frames);  // block API, in place
+}
+```
+
+Other controls: `setDiffusion(0..1)`, `setModDepth(0..1)`,
+`setModRateHz(0.01..5)`, `setWidth(0..2)`, `setFreeze(bool)`.
+
+How it stays cheap:
+
+- **The tank runs at half the host rate** behind a 3-coefficient elliptic
+  half-band pair (flat to 9.6 kHz at 48 kHz, >53 dB alias/image rejection). A
+  dark tail loses nothing, and every byte of delay covers twice the time.
+- **One power-of-two buffer holds all 16 delay lines**, addressed by a single
+  decrementing pointer: every tap is `(pointer + constant) & mask`.
+- **Half-precision storage** (`DarkReverbStorage::Half`, the default) is one
+  `VCVTB` each way on Cortex-M FPUs. Fixed-point Q15 was tried first and
+  rejected: its per-write truncation made a 60 s setting decay in under 5 s at
+  low levels. Half's error is relative, so decay does not depend on level.
+  `DarkReverbStorage::Float` doubles the RAM for 24-bit precision.
+- **No libm, divides or `sin()` in the audio path.** Coefficients are computed
+  in the setters, and the LFOs are magic-circle rotations.
+
+Behavior worth knowing:
+
+- Decay time is the low-frequency T60, accurate to about 2% (60 s measures
+  59.8 s at 63 Hz). The per-stage lowpass makes highs die sooner: with damping
+  at 3 kHz and 60 s decay, 1 kHz rings for ~20 s and 4 kHz for ~3 s.
+- Modulated allpasses keep long tails from ringing metallically. They use
+  allpass (not linear) interpolation, so modulation adds no loss.
+- Freeze holds the tail for hours at the default modulation (about -1.2 dB
+  per hour). Fast, deep modulation drains it sooner.
+- A 1 Hz subsonic trap in the loop is required. Delay modulation pumps
+  subsonic ring modes, and without the trap a frozen tail at fast modulation
+  grows without bound.
+- Long decays accumulate energy like a real space: feed a 1000 s decay
+  continuous loud input and the wet output will exceed 0 dBFS. A clamp
+  inside the loop bounds the tank, so it can never blow up or go NaN.
+- Capacity sets the ring length at the tank rate (`sampleRate / 2`): 16384 is
+  a 0.64 s ring at 48 kHz, and 8192 (16 KB) or 32768 (64 KB) are the lighter
+  and denser options. At 96 kHz, double the Capacity for the same ring.
+- The half-precision tail settles at about -144 dBFS (the smallest half
+  steps) instead of exact zero.
+- Estimated cost (static count, Cortex-M33, GCC 13 -O2): 269 instructions per
+  stereo output sample, roughly 9-12% of one 150 MHz core at 48 kHz. It has
+  not been measured on hardware yet.
 
 ## Gotchas
 
