@@ -41,8 +41,8 @@
 // - The block API runs decimation, tank and interpolation as three passes
 //   over chunks of 16 tank samples, which keeps more state in FPU registers.
 //
-// Cost (arm-none-eabi-gcc 13.2, -mcpu=cortex-m33 -O2, static count of the
-// block loops): 269 instructions per stereo output sample with Half storage,
+// Original baseline cost (arm-none-eabi-gcc 13.2, -mcpu=cortex-m33 -O2,
+// static count of the block loops): 269 instructions per stereo output sample with Half storage,
 // 232 with Float. Estimated 270-375 cycles, i.e. 9-12% of one 150 MHz
 // RP2350 core at 48 kHz. Not yet measured on hardware.
 //
@@ -314,7 +314,9 @@ class DarkReverb {
   // reaches about +/-70 cents.
   void setModDepth(float amount) {
     modDepth_ = clamp01(amount);
-    updateModulation();
+    // Depth does not change either oscillator's rotation rate. Avoid two
+    // sin calls when a control-rate depth target moves.
+    coeffs_.modDepth = modDepth_ * static_cast<float>(dark_reverb_detail::kMaxModSamples);
   }
 
   // 0.01..5 Hz. The second LFO runs at 0.618x so the stages drift apart.
@@ -394,17 +396,18 @@ class DarkReverb {
       float heldLeft = heldLeft_;
       float heldRight = heldRight_;
       constexpr std::size_t kChunk = 16;  // tank samples per pass
-      float tank[kChunk];
+      // Decimated input is dead after each tank call; reuse its storage for
+      // the left wet output. Saves 64 bytes of scratch on small audio stacks.
       float wetLeft[kChunk];
       float wetRight[kChunk];
       while (frames - i >= 2) {
         const std::size_t pairs = (frames - i) / 2 < kChunk ? (frames - i) / 2 : kChunk;
         for (std::size_t j = 0; j < pairs; ++j) {
           const std::size_t k = i + 2 * j;
-          tank[j] = inputStage(state, coeffs, inLeft[k] + inRight[k], inLeft[k + 1] + inRight[k + 1]);
+          wetLeft[j] = inputStage(state, coeffs, inLeft[k] + inRight[k], inLeft[k + 1] + inRight[k + 1]);
         }
         for (std::size_t j = 0; j < pairs; ++j) {
-          tankStage(state, coeffs, tank[j], wetLeft[j], wetRight[j]);
+          tankStage(state, coeffs, wetLeft[j], wetLeft[j], wetRight[j]);
         }
         for (std::size_t j = 0; j < pairs; ++j) {
           const std::size_t k = i + 2 * j;
