@@ -283,6 +283,23 @@ void audioBlock(float* left, float* right, size_t frames) {
 Other controls: `setDiffusion(0..1)`, `setModDepth(0..1)`,
 `setModRateHz(0.01..5)`, `setWidth(0..2)`, `setFreeze(bool)`.
 
+All arithmetic is already single-precision float. To trade another 32 KiB
+of buffer RAM for full float storage and eliminate half/single conversions
+at the same delay lengths, select:
+
+```cpp
+rpdsp::DarkReverb<16384, rpdsp::DarkReverbStorage::Float> reverb;
+```
+
+Use the block API for audio buffers. Its three passes reuse the decimated
+input scratch for the left wet output (128 rather than 192 bytes of chunk
+arrays, excluding state and compiler spills). `setModDepth()` updates only
+depth; it no longer recalculates the two LFO rotation rates with `sin()`.
+Coefficient setters belong at control rate, on the audio-state owner.
+
+See [host regression tests and measurement limits](tests/README.md)
+and the [Pico2Seq post-delay integration plan](docs/pico2seq-reverb-plan.md).
+
 How it stays cheap:
 
 - **The tank runs at half the host rate** behind a 3-coefficient elliptic
@@ -318,7 +335,7 @@ Behavior worth knowing:
   and denser options. At 96 kHz, double the Capacity for the same ring.
 - The half-precision tail settles at about -144 dBFS (the smallest half
   steps) instead of exact zero.
-- Estimated cost (static count, Cortex-M33, GCC 13 -O2): 269 instructions per
+- Original baseline cost (static count, Cortex-M33, GCC 13 -O2): 269 instructions per
   stereo output sample, roughly 9-12% of one 150 MHz core at 48 kHz. It has
   not been measured on hardware yet.
 
