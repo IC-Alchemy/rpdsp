@@ -1,7 +1,8 @@
 # Host checks
 
-Two standalone C++17 programs cover the library additions used by Pico2Seq's
-master bus: `dark_reverb_test.cpp` (below) and `compressor_stereo_test.cpp`.
+Three standalone C++17 programs cover the library additions used by Pico2Seq's
+master bus: `dark_reverb_test.cpp` (below), `compressor_stereo_test.cpp` and
+`hot_function_hook_test.cpp`.
 
 ## Linked stereo compressor
 
@@ -32,6 +33,24 @@ Mutation check used during review (not part of the program): making the
 detector ignore the right channel, advancing the smoother twice per frame,
 leaving the right channel unscaled, or removing the aliased-pointer guard each
 makes this program fail.
+
+## RAM placement hook
+
+`hot_function_hook_test.cpp` checks that `RPDSP_HOT_FUNCTION` (empty by default,
+see `config.h`) is applied to both `DarkReverb::process()` overloads for Half and
+Float storage. It defines the hook as a 4 KiB alignment and requires all six
+functions to start on such a boundary (by chance a function does so once in 4096),
+then confirms the attribute leaves block and per-sample output equal and finite.
+Removing the hook from either overload makes it fail. Run it like the others:
+
+```sh
+c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc tests/hot_function_hook_test.cpp -o build/hot_function_hook_test
+./build/hot_function_hook_test
+```
+
+It cannot show that a *section* attribute placed the code in RAM: GCC 13.3 on
+x86-64 ignores `section` on class-template members (the ARM 16.1 toolchain honors
+it), so firmware placement is checked in the linked ELF with `arm-none-eabi-nm -S`.
 
 # DarkReverb host checks
 

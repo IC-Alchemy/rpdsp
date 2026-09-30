@@ -59,7 +59,7 @@ guess an API from habit.
 | `analysis.h` | `ZeroCrossingPitchDetector`, `YinPitchDetector<WindowSize, MaxTau>`, `RmsPeakMeter`. |
 | `analog_adsr.h` | `AnalogAdsr` — optional named wrapper around the `adsr_analog` recipe; owns gate/state and offers coefficient or seconds setters. |
 | `bbd_delay.h` | `BbdDelay<Capacity>` — optional named wrapper around `delay_bbd`; owns fixed BBD storage. |
-| `config.h` | `kDefaultSampleRate`, `kDefaultBlockSize` (`RPDSP_BLOCK_SIZE`, must be 16/32/64), `kPi`/`kTwoPi`. |
+| `config.h` | `kDefaultSampleRate`, `kDefaultBlockSize` (`RPDSP_BLOCK_SIZE`, must be 16/32/64), `kPi`/`kTwoPi`, and the empty-by-default `RPDSP_HOT_FUNCTION` placement hook. |
 | `control_surface.h` | `MuxSliderScanner<N>`, `DirectAdcSliderScanner<N>`, `DebouncedButton`. |
 | `dark_reverb.h` | `DarkReverb<Capacity, Storage>` — long, dark stereo reverb for Cortex-M33: half-rate tank, one shared half-precision delay buffer (32 KB default), decays up to 1000 s plus freeze. See [Long dark reverb](#long-dark-reverb). |
 | `delay_line.h` | `DelayLine<Capacity>` — circular buffer with linear/cubic fractional reads. |
@@ -339,6 +339,18 @@ at the same delay lengths, select:
 ```cpp
 rpdsp::DarkReverb<16384, rpdsp::DarkReverbStorage::Float> reverb;
 ```
+
+**Running from RAM.** `DarkReverb`'s two `process()` overloads carry the
+`RPDSP_HOT_FUNCTION` attribute slot (empty unless you define it before the first
+rpdsp include). A firmware that keeps its audio code in SRAM defines it as a
+section attribute the linker script places there, e.g. on a Pico SDK target
+`#define RPDSP_HOT_FUNCTION __attribute__((section(".time_critical.rpdsp")))`.
+Template functions cannot be named by a wrapper, and an out-of-line callee is not
+moved because its caller is, so check the linked map. Measured with
+arm-none-eabi-gcc 16.1 at `-O3 -ffast-math`, `DarkReverb<16384, Half>` puts
+3,132 bytes (block) and 2,256 bytes (per-sample) in that section, and Pico2Seq's
+ELF shows both at SRAM addresses. Without the hook they link into flash and the
+caller reaches them through a veneer.
 
 Use the block API for audio buffers. Its three passes reuse the decimated
 input scratch for the left wet output (128 rather than 192 bytes of chunk
