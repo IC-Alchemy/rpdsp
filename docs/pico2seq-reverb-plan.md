@@ -3,8 +3,11 @@
 Status verified against GitHub on 2026-09-30 UTC. Functional baselines are
 `rpdsp` main at `3fba788b234a2665d243a2410ee4c8df9c9780c1` and
 `Pico2Seq` DeCluttered at `93bb7a1a7757c7dd776b203703bd21ff340301b9`.
-Pico2Seq already pins that rpdsp revision. This document describes the
-remaining integration; reverb is not yet routed into Pico2Seq's audio engine.
+Pico2Seq already pinned that rpdsp revision. The integration below was
+implemented on 2026-09-30 in [rpdsp PR #5](https://github.com/IC-Alchemy/rpdsp/pull/5)
+and [Pico2Seq PR #102](https://github.com/IC-Alchemy/Pico2Seq/pull/102); see
+[Implementation record](#7-implementation-record-2026-09-30) for what was measured, what
+changed from this plan, and the board checks that remain.
 
 ## Verified progress and starting point
 
@@ -16,11 +19,13 @@ remaining integration; reverb is not yet routed into Pico2Seq's audio engine.
 - [x] [Pico2Seq PR #101](https://github.com/IC-Alchemy/Pico2Seq/pull/101) is
   merged as `93bb7a1a7757c7dd776b203703bd21ff340301b9`: submodule advanced to
   the combined rpdsp revision.
-- [ ] Linked stereo compressor and post-delay master reverb.
-- [ ] Stereo PCM output, smoothed controls and Reverb editor.
-- [ ] Versioned persistence and old-project migration.
-- [ ] Integration regressions and ARM firmware/RAM/stack inspection.
-- [ ] Physical Pico 2 timing, memory high-water checks and listening.
+- [x] Linked stereo compressor and post-delay master reverb (rpdsp PR #5, Pico2Seq PR #102).
+- [x] Stereo PCM output, smoothed controls and Reverb editor.
+- [x] Versioned persistence and old-project migration (format 3, v1/v2 upgrade).
+- [x] Integration regressions and ARM firmware/RAM/stack inspection (software checks; see the
+  record below for what is measured and what is an estimate).
+- [ ] Physical Pico 2 timing, memory high-water checks and listening (**pending**: needs a board;
+  commands are in Pico2Seq `docs/audio-performance.md`).
 
 Start implementation on feature branches from the latest repository heads,
 after reading applicable `AGENTS.md`, Pico2Seq's `CLAUDE.md` and
@@ -55,6 +60,10 @@ Those counts are inherited from the original reverb's comments/commit, not
 reproduced in this change. Hardware cycles, XIP/SRAM placement, compiler
 flags and live voices can change the result. A host comparison using software
 Half conversion cannot predict the M33's hardware-conversion performance.
+
+**Decision (2026-09-30): Half is the shipping default.** With Float the counted
+setup-time allocations exceed the linked heap by 1,724 bytes before allocator overhead;
+Half leaves about 30 KB. See the record below and Pico2Seq's audit section.
 
 Float costs exactly 32 KiB more at this capacity and avoids repeated binary16
 rounding in the feedback network. The strongest reason to keep Half is RAM:
@@ -256,3 +265,49 @@ If no board or firmware toolchain is available, finish the available software
 implementation and checks, retain reproducible build/capture commands, and
 mark unavailable checks explicitly. Do not substitute host/emulator timing for
 board CPU utilization or claim available RAM from global-memory totals alone.
+
+## 7. Implementation record (2026-09-30)
+
+Branches: rpdsp `claude/linked-stereo-compressor` (PR #5) and Pico2Seq
+`ccr-9596f6b1-yf2jt1` (PR #102). Pico2Seq pins the rpdsp commit named in its PR.
+
+**What was built**
+
+- rpdsp: `Compressor::processStereo()` (linked detector on `max(|L|,|R|)`, one envelope and
+  smoother advance per frame, one gain for both channels; equal L/R reproduces the mono
+  compressor bit for bit), the `RPDSP_HOT_FUNCTION` placement hook on both
+  `DarkReverb::process()` overloads, and Arduino-safe guards on the host-only test programs.
+- Pico2Seq: `MasterReverb` (audio-owned adapter, lock-free targets plus an SPSC snapshot ring,
+  eased coefficients, one shared per-sample mix, tank always running, freeze ramp),
+  `VoiceManager::processStereoBlock()` with the order voices → delay → reverb → shared master gain →
+  linked compressor, separate L/R PCM16 in `AudioEngine`, format-3 persistence with v1/v2
+  upgrade, and the Reverb page.
+- Reverb page gesture: hold Shift (button 8), hold button 6, press button 2. MAIN layer: faders 1–3 are
+  Mix, Decay, Damping, button 1 toggles Freeze; TONE layer (button 2): Low cut, Diffusion, Mod depth,
+  Width; Shift exits. Mod **rate** is stored but has no fader (four faders per layer).
+
+**Deviations from this plan**
+
+- Half, not Float, is the default (above); Float stays a build flag.
+- `-DPICO2SEQ_REVERB_BYPASS=1` was added as a bench baseline for the CPU A/B, because mix zero
+  keeps the tank running by design and so cannot serve as a no-reverb reference.
+- The out-of-line `DarkReverb::process` overloads linked into flash even though their caller was in
+  SRAM, so a placement hook was added to rpdsp rather than annotating the wrapper.
+- Loading a project never resets the tank: the tail keeps evolving and the new settings ease in over
+  about 30 ms, instead of the fade-out/reset/fade-in the plan suggested for a deliberate reset.
+- The firmware reports `[DIAG MEM]` (heap, heap floor, both stacks) so the board checks below have
+  something to read.
+
+**Measured (host GCC 13.3, ARM GCC 16.1)** — see Pico2Seq `docs/testing.md` and
+`docs/audio-performance.md` for the numbers and their limits:
+
+- Full host suite: 692 tests, the same 33 failing tests with the same assertion text as the fresh
+  baseline at `93bb7a1` (34 failures out of 609, one of them the audio target that did not compile);
+  the audio target now builds and passes. Under `-O3 -ffast-math` the failing set is again identical to
+  the baseline's. A second build with Float storage (`-DPICO2SEQ_REVERB_STORAGE=FLOAT`) gives the same result.
+- Firmware at 225 MHz, `-O3 -ffast-math`, audio in SRAM: Half, Float and bypass all build. Linked heap
+  capacity 400,352 B (Half) versus 409,744 B before the reverb. Hot reverb code is in SRAM after the
+  hook. Frame sizes and an estimated Core 1 chain of about 1.1 KB of 2 KiB.
+
+**Not measured** — everything that needs the board: CPU time and headroom of Half versus bypass,
+the running heap, a stack high-water mark, XIP behavior and listening.

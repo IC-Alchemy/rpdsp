@@ -59,12 +59,12 @@ guess an API from habit.
 | `analysis.h` | `ZeroCrossingPitchDetector`, `YinPitchDetector<WindowSize, MaxTau>`, `RmsPeakMeter`. |
 | `analog_adsr.h` | `AnalogAdsr` — optional named wrapper around the `adsr_analog` recipe; owns gate/state and offers coefficient or seconds setters. |
 | `bbd_delay.h` | `BbdDelay<Capacity>` — optional named wrapper around `delay_bbd`; owns fixed BBD storage. |
-| `config.h` | `kDefaultSampleRate`, `kDefaultBlockSize` (`RPDSP_BLOCK_SIZE`, must be 16/32/64), `kPi`/`kTwoPi`. |
+| `config.h` | `kDefaultSampleRate`, `kDefaultBlockSize` (`RPDSP_BLOCK_SIZE`, must be 16/32/64), `kPi`/`kTwoPi`, and the empty-by-default `RPDSP_HOT_FUNCTION` placement hook. |
 | `control_surface.h` | `MuxSliderScanner<N>`, `DirectAdcSliderScanner<N>`, `DebouncedButton`. |
 | `dark_reverb.h` | `DarkReverb<Capacity, Storage>` — long, dark stereo reverb for Cortex-M33: half-rate tank, one shared half-precision delay buffer (32 KB default), decays up to 1000 s plus freeze. See [Long dark reverb](#long-dark-reverb). |
 | `delay_line.h` | `DelayLine<Capacity>` — circular buffer with linear/cubic fractional reads. |
 | `DSPFunctions.h` | Free-function DSP recipes (`comp_feedback`, `filt_diodesvf`, `filt_vowel`, `osc_pdmorph`/`osc_fbfm`/`osc_chaosdrift`/`osc_morphtsq`/`osc_tzfm`/`osc_dsf`/`osc_formant`/`osc_revsync`/`osc_prism`, `res_tension`/`res_braid`, `gtr_feedback`, `delay_bbd`/`delay_tape`, `fx_swarm`/`fx_diffuse`/`gran_cloud`/`fx_freqshift`/`fx_memoryfold`, `ringmod_diode`, `pitch_octdown`, `adsr_analog`, `env_loopad`, `lfo_randcubic`/`lfo_hesitate`, `chaos_lorenz`, `cv_wander`, `smooth_catchup`). Caller-owned `float*` state; `inc = freq/fs`. |
-| `dynamics.h` | `EnvelopeFollower`, `CompressorStaticCurve`, `GainReductionSmoother`, `Compressor`. |
+| `dynamics.h` | `EnvelopeFollower`, `CompressorStaticCurve`, `GainReductionSmoother`, `Compressor` (mono `process(x)` plus a linked stereo `processStereo(l, r)`). See [Linked stereo compressor](#linked-stereo-compressor). |
 | `effects.h` | `Waveshaper`, `Delay<Capacity>`, `Chorus<Capacity>`, `CombFilter<Capacity>`, `AllpassFilter<Capacity>`, `SchroederReverb`, `StereoSchroederReverb`. |
 | `envelope.h` | `ADSR`. |
 | `filter.h` | `OnePoleLowpass`, `DcBlocker`, `BiquadLowpass`, `StateVariableFilter` (+ `StateVariableOutput`). |
@@ -123,6 +123,9 @@ Worth knowing before you guess an API from habit:
   highpass}`; `StereoSchroederReverb::process(l, r)` and
   `DarkReverb::process(l, r)` → `std::array<float, 2>`. `DarkReverb` also has
   a block overload `process(inL, inR, outL, outR, frames)` (in-place is fine).
+- **Stereo dynamics take references or paired blocks and modify in place:**
+  `Compressor::processStereo(float& l, float& r)` and
+  `Compressor::processStereo(float* l, float* r, frames)`.
 - **Integer samples, not float:** everything in `hardware_interpolator.h`
   operates on `std::int32_t`/`std::int16_t`.
 - **Callback-driven instead of `process()`:** `MuxSliderScanner::scan(...)`
@@ -257,6 +260,52 @@ continuous excitation can still build up a level above unity. Its `g1/g2`
 describe the uncoupled pitches, which change when coupling is introduced.
 Hardware CPU cost and sound still need measurement on the target board.
 
+## Linked stereo compressor
+
+`Compressor::processStereo()` compresses a stereo pair with one shared gain:
+
+```cpp
+#include <rpdsp/dynamics.h>
+
+rpdsp::Compressor comp;
+
+void setup() {
+  comp.prepare(48000.0f);
+  comp.setThresholdDb(-10.0f);
+  comp.setRatio(1.8f);
+  comp.setKneeWidthDb(6.0f);
+  comp.setAttackRelease(15.0f, 150.0f);
+  comp.setMakeupGainDb(1.5f);
+}
+
+void audioBlock(float* left, float* right, size_t frames) {
+  comp.processStereo(left, right, frames);  // in place; left != right
+}
+```
+
+- The detector sees `max(|left|, |right|)`. The envelope follower and the
+  gain-reduction smoother advance **once per frame**, and the resulting gain
+  multiplies both channels, so the level ratio between the channels (the
+  stereo image) is unchanged by compression.
+- Equal channels reproduce the mono transfer **bit-for-bit**: `process(x)` and
+  `processStereo(x, x)` share one `gainForLevel()` helper, so the mono path's
+  arithmetic is unchanged. `tests/compressor_stereo_test.cpp` pins both against
+  a reference assembled from the public envelope/curve/smoother blocks. At
+  review time the refactored mono path was also compared with the previous
+  header over 8,000,000 samples (0 differing bits, IEEE `-O2` and `-O3
+  -ffast-math`); that one-off harness is not part of the repository.
+- Do not emulate this with two compressors (a hot side ducks alone and the
+  image leans) or by calling `process()` on both channels of one instance
+  (the envelope and smoother would advance twice per frame, halving every
+  time constant). Both mistakes are pinned by `tests/compressor_stereo_test.cpp`.
+- The block form is a plain loop over frames with all state carried across
+  calls, so any partition of a stream produces identical output. Passing the
+  same pointer for both channels is treated as a mono buffer (one gain per
+  sample) instead of scaling it twice.
+- Cost per frame is one `log10f` and one `powf`, shared by both channels,
+  exactly as the mono path pays per sample. Hardware cycles are not measured
+  here.
+
 ## Long dark reverb
 
 `DarkReverb` is built for tails of tens of seconds to minutes on an RP2350
@@ -290,6 +339,18 @@ at the same delay lengths, select:
 ```cpp
 rpdsp::DarkReverb<16384, rpdsp::DarkReverbStorage::Float> reverb;
 ```
+
+**Running from RAM.** `DarkReverb`'s two `process()` overloads carry the
+`RPDSP_HOT_FUNCTION` attribute slot (empty unless you define it before the first
+rpdsp include). A firmware that keeps its audio code in SRAM defines it as a
+section attribute the linker script places there, e.g. on a Pico SDK target
+`#define RPDSP_HOT_FUNCTION __attribute__((section(".time_critical.rpdsp")))`.
+Template functions cannot be named by a wrapper, and an out-of-line callee is not
+moved because its caller is, so check the linked map. Measured with
+arm-none-eabi-gcc 16.1 at `-O3 -ffast-math`, `DarkReverb<16384, Half>` puts
+3,132 bytes (block) and 2,256 bytes (per-sample) in that section, and Pico2Seq's
+ELF shows both at SRAM addresses. Without the hook they link into flash and the
+caller reaches them through a veneer.
 
 Use the block API for audio buffers. Its three passes reuse the decimated
 input scratch for the left wet output (128 rather than 192 bytes of chunk

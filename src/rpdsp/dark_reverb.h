@@ -350,7 +350,7 @@ class DarkReverb {
 
   // Per-sample API. The tank runs on every second call. Output is identical
   // to the block API, so the two can be mixed freely.
-  std::array<float, 2> process(float left, float right) {
+  RPDSP_HOT_FUNCTION std::array<float, 2> process(float left, float right) {
     const float mono = left + right;
     float wetLeft;
     float wetRight;
@@ -374,8 +374,8 @@ class DarkReverb {
   // Block API: in-place is fine (out may alias in). Any frame count works;
   // pairs are processed with state held in locals, and an odd leftover
   // sample goes through the per-sample path.
-  void process(const float* inLeft, const float* inRight, float* outLeft, float* outRight,
-               std::size_t frames) {
+  RPDSP_HOT_FUNCTION void process(const float* inLeft, const float* inRight, float* outLeft,
+                                  float* outRight, std::size_t frames) {
     std::size_t i = 0;
     if (phase_ != 0 && frames > 0) {
       const auto out = process(inLeft[0], inRight[0]);
