@@ -1,3 +1,7 @@
+// Host-only program. The Arduino build compiles every .cpp below the sketch's
+// src/, which includes a checked-out src/rpdsp/tests, so the file is empty there.
+#ifndef ARDUINO
+
 #include <rpdsp/dynamics.h>
 #include <rpdsp/realtime.h>
 
@@ -349,3 +353,5 @@ int main() {
   std::printf("PASS compressor stereo; deterministic output hash %016llx\n", static_cast<unsigned long long>(hash));
   return 0;
 }
+
+#endif  // !ARDUINO

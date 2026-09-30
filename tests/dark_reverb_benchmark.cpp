@@ -1,3 +1,7 @@
+// Host-only program. The Arduino build compiles every .cpp below the sketch's
+// src/, which includes a checked-out src/rpdsp/tests, so the file is empty there.
+#ifndef ARDUINO
+
 // Host timing is useful for regression checks, not for estimating RP2350 CPU.
 #include <rpdsp/dark_reverb.h>
 #include <array>
@@ -54,3 +58,5 @@ int main() {
   benchmark<rpdsp::DarkReverbStorage::Half>("Half (software conversion on this host)");
   benchmark<rpdsp::DarkReverbStorage::Float>("Float");
 }
+
+#endif  // !ARDUINO

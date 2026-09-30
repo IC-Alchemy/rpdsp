@@ -1,3 +1,7 @@
+// Host-only program. The Arduino build compiles every .cpp below the sketch's
+// src/, which includes a checked-out src/rpdsp/tests, so the file is empty there.
+#ifndef ARDUINO
+
 #include <rpdsp/dark_reverb.h>
 
 #include <algorithm>
@@ -170,3 +174,5 @@ int main(int argc, char** argv) {
               sizeof(rpdsp::DarkReverb<16384, DarkReverbStorage::Float>));
   if (trace) check(std::fclose(trace) == 0, "close trace");
 }
+
+#endif  // !ARDUINO
