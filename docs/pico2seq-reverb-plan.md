@@ -1,8 +1,35 @@
 # DarkReverb after Pico2Seq's master delay
 
-Plan based on `rpdsp` main at `3a2d89a011133ddda4a25d8c47051bc7cdb7ca16`
-and `Pico2Seq` DeCluttered at `d0c61fd80f4b79c6de9616880373aad74cdb5871`.
-This document proposes integration; it does not change Pico2Seq firmware.
+Status verified against GitHub on 2026-09-30 UTC. Functional baselines are
+`rpdsp` main at `3fba788b234a2665d243a2410ee4c8df9c9780c1` and
+`Pico2Seq` DeCluttered at `93bb7a1a7757c7dd776b203703bd21ff340301b9`.
+Pico2Seq already pins that rpdsp revision. This document describes the
+remaining integration; reverb is not yet routed into Pico2Seq's audio engine.
+
+## Verified progress and starting point
+
+- [x] [rpdsp PR #3](https://github.com/IC-Alchemy/rpdsp/pull/3) is merged as
+  `a4852786c6aa4ddb3715797f8e00434a4ebecb9a`: scratch reuse, cheaper depth
+  updates, reverb regression tests and benchmarks.
+- [x] [rpdsp PR #4](https://github.com/IC-Alchemy/rpdsp/pull/4) is merged as
+  `3fba788b234a2665d243a2410ee4c8df9c9780c1`: recipe coefficient APIs retained.
+- [x] [Pico2Seq PR #101](https://github.com/IC-Alchemy/Pico2Seq/pull/101) is
+  merged as `93bb7a1a7757c7dd776b203703bd21ff340301b9`: submodule advanced to
+  the combined rpdsp revision.
+- [ ] Linked stereo compressor and post-delay master reverb.
+- [ ] Stereo PCM output, smoothed controls and Reverb editor.
+- [ ] Versioned persistence and old-project migration.
+- [ ] Integration regressions and ARM firmware/RAM/stack inspection.
+- [ ] Physical Pico 2 timing, memory high-water checks and listening.
+
+Start implementation on feature branches from the latest repository heads,
+after reading applicable `AGENTS.md`, Pico2Seq's `CLAUDE.md` and
+`docs/testing.md`. Recheck the heads and pin before editing; preserve later
+changes and existing work. The missing-API prerequisite is complete. Do not
+repeat the old cherry-pick just because `25b3549` is not a Git ancestor:
+PR #4 brought its API/source changes onto main.
+
+The [copyable agent prompt](pico2seq-reverb-agent-prompt.md) accompanies this plan.
 
 ## Storage decision
 
@@ -42,18 +69,40 @@ mode spacing and the sound. Compare both formats at the same Capacity first.
 No fixed-point rewrite is proposed; it would need separate quiet-tail,
 long-decay and freeze validation.
 
-## 1. Reconcile the rpdsp dependency
+## 1. Verify the existing dependency and establish test baselines
 
-Pico2Seq pins `src/rpdsp` to `25b3549ce446b11ac35c1eb6e3de73e28f0d4c9f`.
-That revision contains the recipe coefficient APIs in `DSPFunctions.h` used by
-`src/voice/engines/RecipeSources.h`. It diverges from `rpdsp/main`: the common
-ancestor is `c8369de`, and main's reverb addition does not include that change.
+The dependency reconciliation and initial submodule update are finished.
+Verify the APIs in the actual pinned `src/rpdsp/src/rpdsp/DSPFunctions.h`:
 
-Before updating the submodule, combine the reverb/optimization branch with
-the `25b3549` recipe coefficient commit in rpdsp. The changes currently touch
-different DSP headers, but compile and run the Pico2Seq recipe tests to verify
-the combination. Pin Pico2Seq to that combined, reviewed commit. Never move
-the submodule directly to current main and silently lose the coefficient APIs.
+| Prepared oscillator API | Expected on the current pin |
+| --- | --- |
+| `PhaseDistortionCoefficients`, `make_osc_pdmorph_coefficients(shape)`, `osc_pdmorph(inc, coefficients, state)` | Present |
+| `PrismCoefficients`, `make_osc_prism_coefficients(focus, spread)`, `osc_prism(inc, coefficients, state)` | Present |
+| Original float-parameter overloads and `recipe_rate_at_sample_rate(...)` | Preserved |
+
+Initialize the submodule and run the recipe/DSP tests before adding reverb
+routing. Run the same checks after each relevant dependency change.
+Further library work, such as the linked stereo compressor, belongs on an
+rpdsp feature branch. Record its exact commit and update Pico2Seq's pin to
+that compatible commit in the integration branch; preserve the coefficient
+APIs and source behavior already used by the recipe voices.
+
+Prior validation reported in merged PRs #4/#101, Linux GCC 13.3:
+
+- Focused `[optimization],[recipes]`: **21 cases / 2,786,106 assertions passed**.
+- Full host CTest: **34 failures out of 609**, with the identical failures at
+  the old `25b3549` pin.
+- The audio I2S stub target failed to compile because of designated-initializer
+  order on that host; it was excluded from the above CTest run.
+- ARM firmware and physical board timing/memory/listening were not checked.
+
+These are the preceding PRs' reported results, not a new run for this plan
+update. Capture a fresh baseline, enumerate existing failures and compare
+failure identities after integration. Do not label the full suite clean or
+treat every later failure as pre-existing. To validate changed stereo output,
+make the relevant audio-stub target build on the chosen host (keeping any
+portability fix focused and behavior-preserving), or provide an equivalent
+testable PCM render path and explicitly report the uncovered driver target.
 
 ## 2. Add stereo processing to the master bus
 
@@ -150,9 +199,11 @@ freeze off unless an explicit product decision defines freezing an empty tank.
 
 ## 5. Acceptance gates and commit order
 
-1. **Combined rpdsp dependency + reverb regression tests.** Run the existing
-   Pico2Seq recipe/DSP tests before and after the submodule update. This PR's
-   host reverb tests are a prerequisite, not a Pico2Seq build result.
+1. **Baseline and dependency verification.** The combined pin is already in
+   place. Record fresh recipe/DSP and full-suite baselines, including known
+   failures and the audio-stub build status. Run the standalone reverb tests
+   with normal and fast-math flags. Existing rpdsp host results do not establish
+   a Pico2Seq integration or firmware build result.
 2. **Stereo compressor and master bus.** Add tests beside
    `test_master_bus.cpp`, `test_master_compressor.cpp` and `test_master_delay.cpp`:
    mix-zero legacy PCM, mono-input normalization, delay repeats reaching the
@@ -182,3 +233,26 @@ If Float fails the RAM gate, retain Half at the same capacity and measure its
 CPU cost. If CPU or memory still fails, use the results to choose the next
 optimization; reducing capacity or changing interpolation requires a separate
 sound-quality review.
+
+## 6. Integration-agent deliverables
+
+Implement sections 2–4, then complete the software checks in section 5. Deliver
+reviewable, logically grouped PRs in rpdsp and Pico2Seq as needed, with a precise
+dependency pin and commit order. Update this checklist and the relevant
+architecture/audio/control/persistence documentation with the resulting design.
+
+The handoff report should include:
+
+- Repository branches/commits/PRs, changed files and the exact rpdsp pin.
+- Chosen Reverb-page entry gesture and controls; document any necessary deviation.
+- Test commands and results, with baseline failures separated from new failures.
+- Normal versus fast-math numerical comparisons and regression tolerances.
+- Firmware build options and artifact paths; linked SRAM placement, static RAM,
+  accounted setup-time allocations and estimated call-chain stack requirements.
+- What was actually measured on hardware, and what remains pending.
+- Exact commands and scenarios for the remaining board checks.
+
+If no board or firmware toolchain is available, finish the available software
+implementation and checks, retain reproducible build/capture commands, and
+mark unavailable checks explicitly. Do not substitute host/emulator timing for
+board CPU utilization or claim available RAM from global-memory totals alone.
