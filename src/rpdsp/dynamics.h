@@ -3,7 +3,9 @@
 #include "algorithm.h"
 #include "realtime.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
 
 namespace rpdsp {
 
@@ -148,15 +150,49 @@ class Compressor {
   }
 
   float process(float input) {
-    const float level = detector_.process(input);
-    const float inputDb = gainToDb(level);
-    const float targetGainReductionDb = curve_.gainReductionDb(inputDb);
-    // Smooth gain, not audio, to avoid pumping from per-sample detector jitter.
-    const float smoothedGainReductionDb = gainSmoother_.process(targetGainReductionDb);
-    return input * dbToGain(smoothedGainReductionDb + makeupGainDb_);
+    return input * gainForLevel(detector_.process(input));
+  }
+
+  // Linked stereo: the detector sees max(|left|, |right|), the envelope and
+  // the gain-reduction smoother advance ONCE per frame, and the same gain
+  // multiplies both channels, so the stereo image cannot lean when one side is
+  // louder. Equal channels reproduce process() bit-for-bit (same operations,
+  // same order). Two independent compressors would let a loud side duck alone,
+  // and calling process() on each channel of one instance would advance the
+  // envelope and smoother twice per frame, halving every time constant.
+  void processStereo(float& left, float& right) {
+    const float linked = std::max(std::fabs(left), std::fabs(right));
+    const float gain = gainForLevel(detector_.process(linked));
+    left *= gain;
+    right *= gain;
+  }
+
+  // In-place block form of processStereo(): one frame per index, state carried
+  // across calls, so any partition of a stream gives identical output. Passing
+  // the same pointer for both channels is a mono buffer: it gets one gain per
+  // sample instead of being scaled twice.
+  void processStereo(float* left, float* right, std::size_t frames) {
+    if (left == right) {
+      for (std::size_t i = 0; i < frames; ++i) {
+        left[i] = process(left[i]);
+      }
+      return;
+    }
+    for (std::size_t i = 0; i < frames; ++i) {
+      processStereo(left[i], right[i]);
+    }
   }
 
  private:
+  // Detector level -> linear gain. Smooths the gain, not the audio, to avoid
+  // pumping from per-sample detector jitter. Shared by every process form.
+  float gainForLevel(float level) {
+    const float inputDb = gainToDb(level);
+    const float targetGainReductionDb = curve_.gainReductionDb(inputDb);
+    const float smoothedGainReductionDb = gainSmoother_.process(targetGainReductionDb);
+    return dbToGain(smoothedGainReductionDb + makeupGainDb_);
+  }
+
   float sampleRate_ = kDefaultSampleRate;
   float makeupGainDb_ = 0.0f;
   CompressorStaticCurve curve_;
