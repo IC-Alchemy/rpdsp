@@ -72,6 +72,9 @@ guess an API from habit.
 | `gate_pattern.h` | `GatePattern<MaxSteps>` — step-mask trigger sequencer. |
 | `hardware_interpolator.h` | RP2350/RP2040 SIO interpolator wrappers: `HardwareInterpolatorPool`, `HardwareWavefolder`, `HardwareBlend`, `HardwareClamp`, `HardwareOscillator`, `HardwareMorphOscillator`, `HardwareFoldClamp`. Integer (`int32_t`/`int16_t`) samples, not float. |
 | `hypersaw.h` | `Hypersaw` — 7-voice Super Saw (Szabo model). |
+| `interpolation.h` | `cubicLagrangeInterpolate()` — stateless third-order
+  Lagrange interpolation of four ordered samples at a fractional position;
+  shared by `DelayLine::readCubic()` and other callers. |
 | `joystick_recorder.h` | `JoystickRecorder<MaxPositions>` — record/loop an (x, y) motion path. |
 | `knob_bank.h` | `KnobBank<NumBanks, NumKnobs>` — multi-bank pickup-aware parameter storage. |
 | `ladder.h` | `LadderFilter` — 4-pole Huovilainen Moog ladder (LP/BP/HP, 12/24 dB/oct). |

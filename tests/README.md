@@ -1,8 +1,46 @@
 # Host checks
 
-Three standalone C++17 programs cover the library additions used by Pico2Seq's
-master bus: `dark_reverb_test.cpp` (below), `compressor_stereo_test.cpp` and
-`hot_function_hook_test.cpp`.
+Four standalone C++17 programs cover the library additions used by Pico2Seq's
+master bus: `dark_reverb_test.cpp` (below), `compressor_stereo_test.cpp`,
+`hot_function_hook_test.cpp` and `delay_line_test.cpp`.
+
+## Delay line and cubic interpolation
+
+`delay_line_test.cpp` checks `DelayLine::readCubic()` and the shared
+`rpdsp::cubicLagrangeInterpolate()` helper in `src/rpdsp/interpolation.h` with
+the standard library only. Run from the repository root:
+
+```sh
+mkdir -p build
+c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc tests/delay_line_test.cpp -o build/delay_line_test
+./build/delay_line_test
+c++ -std=c++17 -O3 -ffast-math -Isrc tests/delay_line_test.cpp -o build/delay_line_test_fast
+./build/delay_line_test_fast
+```
+
+It covers integer delays returning the tapped sample exactly, fractional
+delays of a cubic signal reproducing that cubic, a single non-zero sample
+picking out exactly one Lagrange weight, delays clamped at both ends of the
+ring (negative and beyond capacity), taps that wrap across the write index,
+the plain `read()` and `readLinear()` readers, `reset()`, and the helper
+agreeing with `DelayLine::readCubic()` on every case. Normal IEEE builds
+compare the helper and the caller bit-for-bit; fast-math builds use a small
+tolerance because reassociation can differ between call sites.
+
+The test also writes a deterministic binary32 trace of every cubic read when
+given a filename, which is how a refactor of the interpolation is checked
+for bit-identical output. Compile the same test source against the old and
+the new header and compare the traces:
+
+```sh
+./build/delay_line_test build/before.f32
+./build/delay_line_test build/after.f32
+cmp build/before.f32 build/after.f32
+```
+
+Compare normal IEEE and fast-math builds separately, with the same
+compiler, target and flags. A hash from another compiler configuration is not
+a universal reference response.
 
 ## Linked stereo compressor
 

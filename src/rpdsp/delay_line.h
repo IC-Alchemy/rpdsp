@@ -1,5 +1,7 @@
 #pragma once
 
+#include "interpolation.h"
+
 #include <array>
 #include <cassert>
 #include <cstddef>
@@ -55,12 +57,7 @@ class DelayLine {
     const float y1 = read(nextDelayIndex(whole));
     const float y2 = read(nextDelayIndex(nextDelayIndex(whole)));
 
-    const float c0 = (-frac * (frac - 1.0f) * (frac - 2.0f)) * (1.0f / 6.0f);
-    const float c1 = ((frac + 1.0f) * (frac - 1.0f) * (frac - 2.0f)) * 0.5f;
-    const float c2 = (-(frac + 1.0f) * frac * (frac - 2.0f)) * 0.5f;
-    const float c3 = ((frac + 1.0f) * frac * (frac - 1.0f)) * (1.0f / 6.0f);
-
-    return (ym1 * c0) + (y0 * c1) + (y1 * c2) + (y2 * c3);
+    return cubicLagrangeInterpolate(frac, ym1, y0, y1, y2);
   }
 
  private:
