@@ -28,6 +28,7 @@
 #include "rpdsp/gate_pattern.h"
 #include "rpdsp/hardware_interpolator.h"
 #include "rpdsp/hypersaw.h"
+#include "rpdsp/interpolation.h"
 #include "rpdsp/joystick_recorder.h"
 #include "rpdsp/knob_bank.h"
 #include "rpdsp/ladder.h"
