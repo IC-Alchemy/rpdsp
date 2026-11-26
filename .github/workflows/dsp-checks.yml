@@ -1,0 +1,42 @@
+name: DSP checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-clang:
+    name: Windows Clang DSP checks
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Build and run standalone DSP checks
+        shell: pwsh
+        run: |
+          clang++ --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          New-Item -ItemType Directory -Path build -Force | Out-Null
+          $tests = @(
+            'dsp_edge_cases_test'
+            'delay_line_test'
+            'compressor_stereo_test'
+            'dark_reverb_test'
+          )
+          foreach ($test in $tests) {
+            Write-Host "Building and running $test"
+            $executable = "./build/$test.exe"
+            # The optional DarkReverb trace uses standard fopen.
+            clang++ -std=c++17 -O2 -Wall -Wextra -Werror -D_CRT_SECURE_NO_WARNINGS -Isrc "tests/$test.cpp" -o $executable
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & $executable
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
