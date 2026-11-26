@@ -43,7 +43,7 @@ template <size_t Capacity>
 class Delay {
  public:
   void prepare(float sampleRate) {
-    sampleRate_ = sampleRate > 1.0f ? sampleRate : kDefaultSampleRate;
+    sampleRate_ = safeSampleRate(sampleRate);
     reset();
   }
 
@@ -73,7 +73,7 @@ template <size_t Capacity>
 class Chorus {
  public:
   void prepare(float sampleRate) {
-    sampleRate_ = sampleRate > 1.0f ? sampleRate : kDefaultSampleRate;
+    sampleRate_ = safeSampleRate(sampleRate);
     lfo_.prepare(sampleRate_);
     lfo_.setFreq(rateHz_);
     reset();
@@ -152,7 +152,7 @@ class AllpassFilter {
 class SchroederReverb {
  public:
   void prepare(float sampleRate) {
-    sampleRate_ = sampleRate > 1.0f ? sampleRate : kDefaultSampleRate;
+    sampleRate_ = safeSampleRate(sampleRate);
     damping_.prepare(sampleRate_);
     damping_.setCutoff(6000.0f);
     reset();
@@ -207,7 +207,7 @@ class StereoSchroederReverb {
     right_.prepare(sampleRate);
     left_.setMix(1.0f);
     right_.setMix(1.0f);
-    reset();
+    rightPreDelay_.reset();
   }
 
   void reset() {

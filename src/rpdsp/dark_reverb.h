@@ -557,9 +557,9 @@ class DarkReverb {
     // delay it realises stays within 0.01 samples of d.
     const float a = t * (-0.5f + t * (0.25f - 0.125f * t));
     const std::uint32_t index = pointer + kLayout.base[L] + whole;
-    const float near = load(buffer_[index & kMask]);
-    const float far = load(buffer_[(index + 1u) & kMask]);
-    const float delayed = a * (near - interp) + far;
+    const float firstTap = load(buffer_[index & kMask]);
+    const float secondTap = load(buffer_[(index + 1u) & kMask]);
+    const float delayed = a * (firstTap - interp) + secondTap;
     interp = zapDenormal(delayed);
     const float v = x + g * delayed;
     put<L>(pointer, v);

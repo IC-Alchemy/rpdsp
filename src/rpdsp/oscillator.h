@@ -348,17 +348,20 @@ class HardSyncSaw {
   static bool sameEventTime(float a, float b) { return std::fabs(a - b) <= 1.0e-5f; }
 
   void scheduleSyncImpulses() {
-    if (masterIncrement_ <= 0.0f || slaveIncrement_ <= 0.0f) {
+    if (masterIncrement_ == 0.0f && slaveIncrement_ == 0.0f) {
       return;
     }
 
     float elapsed = 0.0f;
     int guard = 0;
-    // Multiple slave wraps can happen within one master sample at high sync ratios; cap the loop.
+    // Master resets and natural slave wraps can both land in a single sample.
     while (elapsed < 1.0f && guard < 4) {
       ++guard;
-      const float masterTime = (1.0f - masterPhase_) / masterIncrement_;
-      const float slaveTime = (1.0f - slavePhase_) / slaveIncrement_;
+      // A stationary oscillator has no wrap due in the current sample.
+      const float masterTime = masterIncrement_ == 0.0f ? 2.0f
+          : (1.0f - masterPhase_) / masterIncrement_;
+      const float slaveTime = slaveIncrement_ == 0.0f ? 2.0f
+          : (1.0f - slavePhase_) / slaveIncrement_;
       const float nextEventTime = std::min(masterTime, slaveTime);
 
       if (elapsed + nextEventTime > 1.0f) {

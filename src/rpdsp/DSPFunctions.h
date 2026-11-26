@@ -472,6 +472,24 @@ inline float gtr_feedback(float x, float w, float bloom, float* state) {
 
 // Delays & Time FX
 
+namespace detail {
+
+// With a valid index, only advancing from the final slot needs to wrap.
+inline int nextRecipeBufferIndex(int index, int length) {
+    const int next = index + 1;
+    return next == length ? 0 : next;
+}
+
+// Read positions are at most one ring behind. A tiny negative position can
+// round to length when the ring length is added, so wrap that endpoint too.
+inline float wrapRecipeReadPosition(float position, int length) {
+    const float extent = static_cast<float>(length);
+    position += extent * static_cast<float>(position < 0.0f);
+    return position >= extent ? 0.0f : position;
+}
+
+} // namespace detail
+
 // BBD-Style Delay
 
 
@@ -489,8 +507,8 @@ inline float delay_bbd(float x, float* buf, int n, float clock, float fb, float*
     wp -= (float)n * (float)(wp >= (float)n);
     int i0 = (int)wp;
     buf[i0] = state[1];
-    int r0 = i0 + 1; r0 -= n * (r0 >= n);              // oldest sample
-    int r1 = r0 + 1; r1 -= n * (r1 >= n);
+    const int r0 = detail::nextRecipeBufferIndex(i0, n); // oldest sample
+    const int r1 = detail::nextRecipeBufferIndex(r0, n);
     float fr = wp - (float)i0;
     float out = buf[r0] + fr * (buf[r1] - buf[r0]);
     state[0] = wp; state[2] = out;
@@ -532,15 +550,15 @@ inline float delay_tape(float x, float* buf, int n, float dly, float wow, float 
     float t1 = 2.0f * state[1]; if (t1 > 1.0f) t1 -= 2.0f;
     float mod = wow * (2.8f * t0 * (1.0f - fabsf(t0)) + 1.2f * t1 * (1.0f - fabsf(t1)));
     int wp = (int)state[2];
-    float rp = (float)wp - clamp(dly + mod, 1.0f, (float)(n - 2));
-    rp += (float)n * (float)(rp < 0.0f);
-    if (rp >= (float)n) rp = 0.0f;                  // tiny negative rp can round to n
-    int r0 = (int)rp, r1 = r0 + 1; r1 -= n * (r1 >= n);
+    const float rp = detail::wrapRecipeReadPosition(
+        (float)wp - clamp(dly + mod, 1.0f, (float)(n - 2)), n);
+    const int r0 = (int)rp;
+    const int r1 = detail::nextRecipeBufferIndex(r0, n);
     float fr = rp - (float)r0;
     float out = buf[r0] + fr * (buf[r1] - buf[r0]);
     state[3] += coeff.oxide * (out - state[3]);
     buf[wp] = x + fastTanh(state[3] * fb);
-    state[2] = (float)((wp + 1) % n);
+    state[2] = (float)detail::nextRecipeBufferIndex(wp, n);
     state[3] = zapDenormal(state[3]);
     return out;
 }
@@ -590,18 +608,17 @@ inline float fx_swarm(float x, float color, float regen, float* state) {
 inline float fx_diffuse(float x, float* buf, int n, float size, float mix, float* state) {
     if (n < 3 || n > 16777216) return x;
     // Clamp size so the largest prime tap (1979*size + 1) fits inside the
-    // ring after a single wrap: hard precondition n > 1980*size + 2.
+    // ring after a single wrap.
     const float sizeMax = fminf(1.0f, (float)(n - 2) * (1.0f / 1980.0f));
     size = clamp(size, 0.0f, sizeMax);
     int wp = (int)state[0];
     buf[wp] = x;
-    state[0] = (float)((wp + 1) % n);
+    state[0] = (float)detail::nextRecipeBufferIndex(wp, n);
     static const float off[4] = {241.0f, 563.0f, 1181.0f, 1979.0f};
     static const float gn[4]  = {0.45f, -0.38f, 0.31f, -0.26f};
     float wet = 0.0f;
     for (int i = 0; i < 4; ++i) {
-        float rp = (float)wp - off[i] * size - 1.0f;
-        rp += (float)n * (float)(rp < 0.0f);
+        const float rp = detail::wrapRecipeReadPosition((float)wp - off[i] * size - 1.0f, n);
         wet += gn[i] * buf[(int)rp];
     }
     return x + mix * wet;
@@ -623,16 +640,15 @@ inline float gran_cloud(float x, float* buf, int n, float spread, uint32_t* rng,
     spread = clamp(spread, 0.0f, fmaxf(0.0f, (float)(n - 4)));
     int wp = (int)state[0];
     buf[wp] = x;
-    state[0] = (float)((wp + 1) % n);
+    state[0] = (float)detail::nextRecipeBufferIndex(wp, n);
     float out = 0.0f;
     for (int i = 0; i < 3; ++i) {
         uint32_t r = *rng * 1664525u + 1013904223u; *rng = r;
         float tgt = (float)(r >> 8) * (1.0f / 16777216.0f) * spread + 2.0f;
         state[1 + i] += 0.0003f * (tgt - state[1 + i]);
-        float rp = (float)wp - state[1 + i];
-        rp += (float)n * (float)(rp < 0.0f);
-        if (rp >= (float)n) rp = 0.0f;              // tiny startup lag can round to n
-        int r0 = (int)rp, r1 = r0 + 1; r1 -= n * (r1 >= n);
+        const float rp = detail::wrapRecipeReadPosition((float)wp - state[1 + i], n);
+        const int r0 = (int)rp;
+        const int r1 = detail::nextRecipeBufferIndex(r0, n);
         float fr = rp - (float)r0;
         out += buf[r0] + fr * (buf[r1] - buf[r0]);
     }

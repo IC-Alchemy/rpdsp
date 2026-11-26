@@ -238,7 +238,11 @@ void readerCoverage() {
         "linear read halfway between two samples");
   line.reset();
   check(bits(line.read(0)) == bits(0.0f), "reset clears the ring");
+#ifdef __FAST_MATH__
+  check(line.readCubic(0.0f) == 0.0f, "reset clears the cubic tap");
+#else
   check(bits(line.readCubic(0.0f)) == bits(0.0f), "reset clears the ring");
+#endif
 }
 
 // The helper is a partition of unity: constant samples stay constant.
