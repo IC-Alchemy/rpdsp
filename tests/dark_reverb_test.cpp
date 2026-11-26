@@ -2,7 +2,12 @@
 // src/, which includes a checked-out src/rpdsp/tests, so the file is empty there.
 #ifndef ARDUINO
 
+// Exercise the include order used by clients that have already loaded Windows.h.
+#define near
+#define far
 #include <rpdsp/dark_reverb.h>
+#undef far
+#undef near
 
 #include <algorithm>
 #include <array>

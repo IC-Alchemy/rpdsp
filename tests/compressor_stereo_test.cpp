@@ -271,15 +271,23 @@ void blocksMatchFrames(const Program& program) {
   }
 }
 
-// 5. The same pointer for both channels is one mono buffer, not gain twice.
-void aliasedBufferIsMono(const Program& program) {
+// 5. Aliasing represents a mono sample in both stereo overloads.
+void aliasedChannelsAreMono(const Program& program) {
   rpdsp::Compressor mono;
-  rpdsp::Compressor aliased;
+  rpdsp::Compressor aliasedBlock;
+  rpdsp::Compressor aliasedSample;
   configure(mono, kSettings[0], 48000.0f);
-  configure(aliased, kSettings[0], 48000.0f);
+  configure(aliasedBlock, kSettings[0], 48000.0f);
+  configure(aliasedSample, kSettings[0], 48000.0f);
   std::vector<float> buffer = program.left;
-  aliased.processStereo(buffer.data(), buffer.data(), kFrames);
-  for (std::size_t i = 0; i < kFrames; ++i) equivalent(buffer[i], mono.process(program.left[i]), "aliased channels are mono");
+  aliasedBlock.processStereo(buffer.data(), buffer.data(), kFrames);
+  for (std::size_t i = 0; i < kFrames; ++i) {
+    float sample = program.left[i];
+    const float expected = mono.process(sample);
+    aliasedSample.processStereo(sample, sample);
+    equivalent(sample, expected, "aliased references are mono");
+    equivalent(buffer[i], expected, "aliased pointers are mono");
+  }
 }
 
 // 6. Silence, reset, sample rates and hostile magnitudes.
@@ -348,7 +356,7 @@ int main() {
   sharedGainKeepsImage(program);
   linkedBeatsNaiveAlternatives();
   blocksMatchFrames(program);
-  aliasedBufferIsMono(program);
+  aliasedChannelsAreMono(program);
   edgeCases(program);
   std::printf("PASS compressor stereo; deterministic output hash %016llx\n", static_cast<unsigned long long>(hash));
   return 0;

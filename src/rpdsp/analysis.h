@@ -11,7 +11,7 @@ namespace rpdsp {
 class ZeroCrossingPitchDetector {
  public:
   void prepare(float sampleRate) {
-    sampleRate_ = sampleRate > 1.0f ? sampleRate : kDefaultSampleRate;
+    sampleRate_ = safeSampleRate(sampleRate);
   }
 
   void reset() {
@@ -63,7 +63,7 @@ class YinPitchDetector {
   static_assert(WindowSize > MaxTau + 1, "WindowSize must be larger than MaxTau");
 
   void prepare(float sampleRate) {
-    sampleRate_ = sampleRate > 1.0f ? sampleRate : kDefaultSampleRate;
+    sampleRate_ = safeSampleRate(sampleRate);
     setFreqRange(minFrequencyHz_, maxFrequencyHz_);
     reset();
   }

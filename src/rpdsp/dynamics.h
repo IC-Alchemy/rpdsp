@@ -163,8 +163,10 @@ class Compressor {
   void processStereo(float& left, float& right) {
     const float linked = std::max(std::fabs(left), std::fabs(right));
     const float gain = gainForLevel(detector_.process(linked));
+    // Read both inputs before writing in case the references name one sample.
+    const float scaledRight = right * gain;
     left *= gain;
-    right *= gain;
+    right = scaledRight;
   }
 
   // In-place block form of processStereo(): one frame per index, state carried

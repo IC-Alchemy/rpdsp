@@ -1,8 +1,19 @@
 # Host checks
 
-Four standalone C++17 programs cover the library additions used by Pico2Seq's
-master bus: `dark_reverb_test.cpp` (below), `compressor_stereo_test.cpp`,
-`hot_function_hook_test.cpp` and `delay_line_test.cpp`.
+The standalone C++17 programs below test delay interpolation, linked stereo
+compression, the RAM placement hook, DarkReverb, and DSP edge cases.
+
+## DSP edge cases
+
+`dsp_edge_cases_test.cpp` checks a diffuser read position that rounds to the
+end of the ring, recipe write-head wraps on non-power-of-two buffers, and hard
+sync with either oscillator stopped. Run from the repository root:
+
+```sh
+mkdir -p build
+c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc tests/dsp_edge_cases_test.cpp -o build/dsp_edge_cases_test
+./build/dsp_edge_cases_test
+```
 
 ## Delay line and cubic interpolation
 
@@ -60,7 +71,7 @@ settings including the three Pico2Seq macro anchors, at 44.1/48/96 kHz), a
 reference built from the public envelope/curve/smoother blocks advanced once
 per frame with the louder channel, one shared gain (the channel level ratio is
 preserved), why two independent compressors or a doubled mono call are not
-equivalent, block partitions of 0..1000 frames, aliased channel pointers,
+equivalent, block partitions of 0..1000 frames, aliased pointers and references,
 silence, reset repeatability, sample rates from 8 to 192 kHz and hostile input
 magnitudes. Normal IEEE builds compare bit-exactly; fast-math builds use a
 1e-5 relative tolerance because reassociation can differ between loops. The
